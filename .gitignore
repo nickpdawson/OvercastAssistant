@@ -1,0 +1,29 @@
+# HAR capture files (contain session cookies and personal data)
+*.har
+
+# Local API/project docs (contain reverse-engineered details, personal notes)
+*.md
+!README.md
+
+# PRD (internal planning doc)
+*.docx
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# Original icon source
+OverCastIcon.png

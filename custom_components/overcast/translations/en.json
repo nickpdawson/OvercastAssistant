@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Overcast Login",
+        "description": "Choose how to authenticate with Overcast.",
+        "menu_options": {
+          "email": "Email & Password",
+          "qr": "QR Code (scan with Overcast app)"
+        }
+      },
+      "email": {
+        "title": "Overcast Email Login",
+        "description": "Enter your Overcast account credentials.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "qr": {
+        "title": "Overcast QR Login",
+        "description": "Scan this QR code with the Overcast iOS app to log in:\n\n`{qr_url}`\n\nWaiting for approval..."
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password",
+      "cannot_connect": "Cannot connect to Overcast",
+      "qr_timeout": "QR code login timed out — please try again",
+      "unknown": "An unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "Overcast is already configured",
+      "reauth_successful": "Re-authentication successful"
+    }
+  }
+}

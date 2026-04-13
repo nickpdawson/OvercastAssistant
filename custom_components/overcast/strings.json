@@ -1,0 +1,78 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Overcast Login",
+        "description": "Choose how to authenticate with Overcast.",
+        "menu_options": {
+          "email": "Email & Password",
+          "qr": "QR Code (scan with Overcast app)"
+        }
+      },
+      "email": {
+        "title": "Overcast Email Login",
+        "description": "Enter your Overcast account credentials.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "qr": {
+        "title": "Overcast QR Login",
+        "description": "Scan this QR code with the Overcast iOS app to log in:\n\n`{qr_url}`\n\nWaiting for approval..."
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password",
+      "cannot_connect": "Cannot connect to Overcast",
+      "qr_timeout": "QR code login timed out — please try again",
+      "unknown": "An unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "Overcast is already configured",
+      "reauth_successful": "Re-authentication successful"
+    }
+  },
+  "services": {
+    "play_latest": {
+      "name": "Play Latest",
+      "description": "Play the latest unplayed episode(s) of named podcasts on a media player.",
+      "fields": {
+        "podcasts": {
+          "name": "Podcasts",
+          "description": "List of podcast names to play."
+        },
+        "target_player": {
+          "name": "Target Player",
+          "description": "Entity ID of the media player to play on."
+        },
+        "mark_played": {
+          "name": "Mark Played",
+          "description": "Mark episodes as played in Overcast after playback."
+        },
+        "resume_position": {
+          "name": "Resume Position",
+          "description": "Resume from Overcast's saved position."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "Playback speed to sync to Overcast (e.g. 1.5). Only affects what Overcast records, not actual player speed."
+        }
+      }
+    },
+    "mark_played": {
+      "name": "Mark Played",
+      "description": "Mark an episode as played in Overcast.",
+      "fields": {
+        "episode_url": {
+          "name": "Episode URL",
+          "description": "Overcast episode URL (e.g. https://overcast.fm/+XXXXX)."
+        }
+      }
+    },
+    "refresh": {
+      "name": "Refresh",
+      "description": "Force refresh of Overcast subscription and episode data."
+    }
+  }
+}

@@ -1,0 +1,75 @@
+play_latest:
+  name: Play Latest
+  description: Play the latest unplayed episode(s) of named podcasts on a media player.
+  fields:
+    podcasts:
+      name: Podcasts
+      description: List of podcast names to play.
+      required: true
+      example: '["Up First", "Accidental Tech Podcast"]'
+      selector:
+        object:
+    target_player:
+      name: Target Player
+      description: Entity ID of the media player to play on.
+      required: true
+      example: "media_player.sonos_kitchen"
+      selector:
+        entity:
+          domain: media_player
+    mark_played:
+      name: Mark Played
+      description: Mark episodes as played in Overcast after playback completes.
+      default: true
+      selector:
+        boolean:
+    resume_position:
+      name: Resume Position
+      description: Resume from Overcast's saved position.
+      default: true
+      selector:
+        boolean:
+    speed:
+      name: Speed
+      description: >-
+        Playback speed to sync to Overcast (e.g. 1.0, 1.25, 1.5, 2.0).
+        If omitted, uses the podcast's existing Overcast speed setting.
+        Note: this does NOT change the actual playback speed on the media
+        player — it only controls what speed is reported back to Overcast.
+      selector:
+        select:
+          options:
+            - label: "0.75x"
+              value: "0.75"
+            - label: "1.0x (default)"
+              value: "1.0"
+            - label: "1.125x"
+              value: "1.125"
+            - label: "1.25x"
+              value: "1.25"
+            - label: "1.375x"
+              value: "1.375"
+            - label: "1.5x"
+              value: "1.5"
+            - label: "1.75x"
+              value: "1.75"
+            - label: "2.0x"
+              value: "2.0"
+            - label: "2.25x"
+              value: "2.25"
+
+mark_played:
+  name: Mark Played
+  description: Mark an episode as played in Overcast without playing it.
+  fields:
+    episode_url:
+      name: Episode URL
+      description: Overcast episode URL (e.g. https://overcast.fm/+XXXXX).
+      required: true
+      example: "https://overcast.fm/+d5BN-RlCs"
+      selector:
+        text:
+
+refresh:
+  name: Refresh
+  description: Force an immediate refresh of Overcast subscription and episode data.
