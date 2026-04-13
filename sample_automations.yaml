@@ -1,0 +1,233 @@
+# =============================================================================
+# Overcast for Home Assistant — Sample Automations
+# =============================================================================
+# Copy any of these into your automations.yaml or create them in the HA UI.
+# Replace media_player entities and podcast names with your own.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Morning News Briefing
+# Play The Daily at 7am on the kitchen speaker
+# -----------------------------------------------------------------------------
+- alias: "Morning News — The Daily"
+  description: >
+    Play the latest episode of The Daily every weekday morning.
+    Episode is marked as played in Overcast automatically.
+  trigger:
+    - platform: time
+      at: "07:00:00"
+  condition:
+    - condition: time
+      weekday:
+        - mon
+        - tue
+        - wed
+        - thu
+        - fri
+    - condition: state
+      entity_id: binary_sensor.someone_home
+      state: "on"
+  action:
+    - service: media_player.volume_set
+      target:
+        entity_id: media_player.sonos_kitchen
+      data:
+        volume_level: 0.30
+    - service: overcast.play_latest
+      data:
+        podcasts:
+          - "The Daily"
+        target_player: media_player.sonos_kitchen
+
+# -----------------------------------------------------------------------------
+# Weekend Morning Podcast Queue
+# Stack multiple shows back-to-back on Saturday mornings
+# -----------------------------------------------------------------------------
+- alias: "Weekend Podcasts"
+  description: >
+    Saturday morning lineup: Up First, then Accidental Tech Podcast,
+    then Blank Check. Queue plays in order.
+  trigger:
+    - platform: time
+      at: "08:00:00"
+  condition:
+    - condition: time
+      weekday:
+        - sat
+  action:
+    - service: media_player.volume_set
+      target:
+        entity_id: media_player.sonos_living_room
+      data:
+        volume_level: 0.35
+    - service: overcast.play_latest
+      data:
+        podcasts:
+          - "Up First"
+          - "Accidental Tech Podcast"
+          - "Blank Check with Griffin & David"
+        target_player: media_player.sonos_living_room
+        mark_played: true
+        resume_position: true
+
+# -----------------------------------------------------------------------------
+# Commute Podcast — Play on CarPlay-connected Speaker
+# Triggered when you leave the house
+# -----------------------------------------------------------------------------
+- alias: "Commute Podcast"
+  description: >
+    When I leave home, play the latest episode of The Ezra Klein Show
+    on my phone so it's ready for the drive.
+  trigger:
+    - platform: zone
+      entity_id: person.nick
+      zone: zone.home
+      event: leave
+  condition:
+    - condition: time
+      after: "06:00:00"
+      before: "10:00:00"
+      weekday:
+        - mon
+        - tue
+        - wed
+        - thu
+        - fri
+  action:
+    - service: overcast.play_latest
+      data:
+        podcasts:
+          - "The Ezra Klein Show"
+        target_player: media_player.nick_iphone
+        speed: "1.25"
+
+# -----------------------------------------------------------------------------
+# Bedtime Wind-Down
+# Play a calm podcast at low volume when bedtime routine starts
+# -----------------------------------------------------------------------------
+- alias: "Bedtime Podcast"
+  trigger:
+    - platform: state
+      entity_id: input_boolean.bedtime_mode
+      to: "on"
+  action:
+    - service: media_player.volume_set
+      target:
+        entity_id: media_player.sonos_bedroom
+      data:
+        volume_level: 0.15
+    - service: overcast.play_latest
+      data:
+        podcasts:
+          - "Fresh Air"
+        target_player: media_player.sonos_bedroom
+        resume_position: true
+    # Auto-stop after 30 minutes (sleep timer)
+    - delay:
+        minutes: 30
+    - service: media_player.media_stop
+      target:
+        entity_id: media_player.sonos_bedroom
+
+# -----------------------------------------------------------------------------
+# Workout Podcasts
+# Triggered by a button press or NFC tag
+# -----------------------------------------------------------------------------
+- alias: "Workout Podcasts"
+  trigger:
+    - platform: tag
+      tag_id: gym_nfc_tag
+  action:
+    - service: media_player.volume_set
+      target:
+        entity_id: media_player.sonos_garage
+      data:
+        volume_level: 0.60
+    - service: overcast.play_latest
+      data:
+        podcasts:
+          - "MacBreak Weekly"
+          - "Mac Power Users"
+        target_player: media_player.sonos_garage
+        speed: "1.5"
+
+# -----------------------------------------------------------------------------
+# Catch Up — Mark Old Episodes as Played
+# Use with a script or button to clear your queue
+# -----------------------------------------------------------------------------
+- alias: "Mark Episode Played"
+  description: >
+    Called from a script or dashboard button to mark a specific
+    episode as played without listening to it.
+  trigger:
+    - platform: event
+      event_type: overcast_mark_played
+  action:
+    - service: overcast.mark_played
+      data:
+        episode_url: "{{ trigger.event.data.episode_url }}"
+
+# -----------------------------------------------------------------------------
+# Refresh Overcast Data
+# Force a refresh after subscribing to a new podcast
+# -----------------------------------------------------------------------------
+- alias: "Refresh Overcast Library"
+  trigger:
+    - platform: event
+      event_type: overcast_refresh
+  action:
+    - service: overcast.refresh
+
+# -----------------------------------------------------------------------------
+# Cooking Companion
+# Play a podcast when the kitchen motion sensor activates at meal times
+# -----------------------------------------------------------------------------
+- alias: "Cooking Podcast"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.kitchen_motion
+      to: "on"
+  condition:
+    - condition: or
+      conditions:
+        - condition: time
+          after: "11:30:00"
+          before: "13:00:00"
+        - condition: time
+          after: "17:00:00"
+          before: "19:00:00"
+    - condition: state
+      entity_id: media_player.sonos_kitchen
+      state: "idle"
+  action:
+    - service: media_player.volume_set
+      target:
+        entity_id: media_player.sonos_kitchen
+      data:
+        volume_level: 0.25
+    - service: overcast.play_latest
+      data:
+        podcasts:
+          - "Home Assistant Podcast"
+          - "How Did This Get Made?"
+        target_player: media_player.sonos_kitchen
+
+# -----------------------------------------------------------------------------
+# Voice Assistant — "Play my podcasts"
+# Use with Assist or a conversation trigger
+# -----------------------------------------------------------------------------
+- alias: "Voice — Play Podcasts"
+  trigger:
+    - platform: conversation
+      command:
+        - "play my podcasts"
+        - "play podcasts"
+        - "play the daily"
+  action:
+    - service: overcast.play_latest
+      data:
+        podcasts:
+          - "The Daily"
+          - "Up First"
+        target_player: media_player.sonos_kitchen
+        mark_played: true
