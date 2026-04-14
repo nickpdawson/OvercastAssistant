@@ -141,8 +141,8 @@ class OvercastMediaSource(MediaSource):
                 BrowseMediaSource(
                     domain=DOMAIN,
                     identifier=_encode_id(episode.episode_path),
-                    media_class=MediaClass.PODCAST,
-                    media_content_type=MediaType.PODCAST,
+                    media_class=MediaClass.MUSIC,
+                    media_content_type="audio/mpeg",
                     title=episode.title,
                     can_play=True,
                     can_expand=False,
