@@ -17,8 +17,8 @@ async def test_setup_and_unload(hass: HomeAssistant, aioclient_mock) -> None:
 
     assert entry.state is ConfigEntryState.LOADED
     titles = [p.title for p in entry.runtime_data.subscriptions]
-    assert titles == ["Up First", "Up First Extra", "Accidental Tech Podcast"]
-    assert entry.runtime_data.subscriptions[1].artwork_url == "https://overcast.fm/img/200.jpg"
+    assert titles == ["Up First Extra", "Up First", "Accidental Tech Podcast"]
+    assert entry.runtime_data.subscriptions[0].artwork_url == "https://overcast.fm/img/200.jpg"
     assert hass.services.has_service("overcast", "play_latest")
 
     assert await hass.config_entries.async_unload(entry.entry_id)

@@ -28,9 +28,9 @@ async def test_browse(hass: HomeAssistant, aioclient_mock) -> None:
 
     root = await async_browse_media(hass, "media-source://overcast")
     assert root.children_media_class == MediaClass.PODCAST
-    assert [c.title for c in root.children][:2] == ["Up First", "Up First Extra"]
+    assert [c.title for c in root.children][:2] == ["Up First Extra", "Up First"]
 
-    podcast = await async_browse_media(hass, root.children[0].media_content_id)
+    podcast = await async_browse_media(hass, root.children[1].media_content_id)
     assert podcast.children_media_class == MediaClass.EPISODE
     old, new, _second = podcast.children
     assert new.media_class == MediaClass.EPISODE
