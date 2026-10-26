@@ -1,4 +1,4 @@
-"""Overcast media source for Home Assistant Media Browser."""
+"""Overcast media source for the Home Assistant media browser."""
 
 from __future__ import annotations
 
@@ -13,18 +13,28 @@ from homeassistant.components.media_source import (
     PlayMedia,
     Unresolvable,
 )
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN
+from .const import CONF_MARK_PLAYED, DEFAULT_MARK_PLAYED, DOMAIN
+from .coordinator import OvercastCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+# Sonos only lists browse items whose content type starts with "audio/"
+# (it hides MediaType.PODCAST as incompatible). The real type of each
+# file is only known after its episode page is fetched, so the listing
+# says audio/mpeg and resolve returns the type from the page.
+EPISODE_CONTENT_TYPE = "audio/mpeg"
+UNPLAYED_MARK = "• "  # bullet before unplayed episode titles
+
 
 def _encode_id(path: str) -> str:
-    """Encode a path for use as a media source identifier.
+    """Encode an Overcast path for use as a media source identifier.
 
     Slashes in Overcast paths (e.g. /itunes981330533/slug) conflict with
-    HA's URI parsing, so we percent-encode them.
+    HA's URI parsing, so they are percent-encoded.
     """
     return quote(path, safe="")
 
@@ -35,7 +45,7 @@ def _decode_id(identifier: str) -> str:
 
 
 async def async_get_media_source(hass: HomeAssistant) -> OvercastMediaSource:
-    """Set up Overcast media source."""
+    """Set up the Overcast media source."""
     return OvercastMediaSource(hass)
 
 
@@ -49,70 +59,81 @@ class OvercastMediaSource(MediaSource):
         super().__init__(DOMAIN)
         self.hass = hass
 
-    def _get_coordinator(self):
-        """Get the first available coordinator."""
-        entries = self.hass.data.get(DOMAIN, {})
-        if not entries:
-            return None
-        return next(iter(entries.values()))
+    def _get_coordinator(self) -> OvercastCoordinator | None:
+        """Return the coordinator of the first loaded Overcast account."""
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if entry.state is ConfigEntryState.LOADED:
+                return entry.runtime_data
+        return None
 
     async def async_resolve_media(self, item: MediaSourceItem) -> PlayMedia:
-        """Resolve an episode to a playable URL."""
+        """Resolve an episode to a playable URL and start progress sync."""
         coordinator = self._get_coordinator()
         if not coordinator:
             raise Unresolvable("Overcast integration not configured")
 
         identifier = _decode_id(item.identifier) if item.identifier else ""
-        if not identifier or not identifier.startswith("/+"):
+        if not identifier.startswith("/+"):
             raise Unresolvable(f"Invalid episode identifier: {identifier}")
 
-        episode = await coordinator.async_get_episode_detail(identifier)
+        try:
+            episode = await coordinator.async_get_episode_detail(identifier)
+        except HomeAssistantError as err:
+            raise Unresolvable(str(err)) from err
         if not episode.audio_url:
             raise Unresolvable(f"No audio URL for episode: {identifier}")
 
+        if item.target_media_player:
+            coordinator.async_track_browser_play(
+                episode,
+                item.target_media_player,
+                mark_played=coordinator.config_entry.options.get(
+                    CONF_MARK_PLAYED, DEFAULT_MARK_PLAYED
+                ),
+            )
+
         return PlayMedia(
             url=episode.audio_url,
-            mime_type="audio/mpeg",
+            mime_type=episode.mime_type or EPISODE_CONTENT_TYPE,
         )
 
-    async def async_browse_media(
-        self,
-        item: MediaSourceItem,
-    ) -> BrowseMediaSource:
-        """Browse Overcast media hierarchy."""
+    async def async_browse_media(self, item: MediaSourceItem) -> BrowseMediaSource:
+        """Browse subscriptions and their episodes."""
         coordinator = self._get_coordinator()
         if not coordinator:
             raise BrowseError("Overcast integration not configured")
 
         identifier = _decode_id(item.identifier) if item.identifier else ""
-
-        if not identifier:
-            return await self._build_root(coordinator)
-
-        if identifier.startswith("/p") or identifier.startswith("/itunes"):
-            return await self._build_podcast(coordinator, identifier)
+        try:
+            if not identifier:
+                return await self._build_root(coordinator)
+            if identifier.startswith("/p") or identifier.startswith("/itunes"):
+                return await self._build_podcast(coordinator, identifier)
+        except HomeAssistantError as err:
+            raise BrowseError(str(err)) from err
 
         raise BrowseError(f"Unknown identifier: {identifier}")
 
-    async def _build_root(self, coordinator) -> BrowseMediaSource:
-        """Build the root listing of all subscriptions."""
+    async def _build_root(self, coordinator: OvercastCoordinator) -> BrowseMediaSource:
+        """List all subscriptions."""
         if not coordinator.subscriptions:
             await coordinator.async_refresh()
+            if not coordinator.last_update_success:
+                raise BrowseError("Could not load Overcast subscriptions")
 
-        children = []
-        for podcast in coordinator.subscriptions:
-            children.append(
-                BrowseMediaSource(
-                    domain=DOMAIN,
-                    identifier=_encode_id(podcast.feed_path),
-                    media_class=MediaClass.PODCAST,
-                    media_content_type=MediaType.PODCAST,
-                    title=podcast.title,
-                    can_play=False,
-                    can_expand=True,
-                    thumbnail=podcast.artwork_url,
-                )
+        children = [
+            BrowseMediaSource(
+                domain=DOMAIN,
+                identifier=_encode_id(podcast.feed_path),
+                media_class=MediaClass.PODCAST,
+                media_content_type=MediaType.PODCAST,
+                title=podcast.title,
+                can_play=False,
+                can_expand=True,
+                thumbnail=podcast.artwork_url,
             )
+            for podcast in coordinator.subscriptions
+        ]
 
         return BrowseMediaSource(
             domain=DOMAIN,
@@ -123,39 +144,42 @@ class OvercastMediaSource(MediaSource):
             can_play=False,
             can_expand=True,
             children=children,
+            children_media_class=MediaClass.PODCAST,
         )
 
-    async def _build_podcast(self, coordinator, feed_path: str) -> BrowseMediaSource:
-        """Build the episode listing for a podcast."""
+    async def _build_podcast(
+        self, coordinator: OvercastCoordinator, feed_path: str
+    ) -> BrowseMediaSource:
+        """List the episodes of one podcast."""
         episodes = await coordinator.async_get_episodes(feed_path)
+        podcast = next(
+            (p for p in coordinator.subscriptions if p.feed_path == feed_path), None
+        )
+        artwork = podcast.artwork_url if podcast else None
 
-        podcast_title = "Podcast"
-        for p in coordinator.subscriptions:
-            if p.feed_path == feed_path:
-                podcast_title = p.title
-                break
-
-        children = []
-        for episode in episodes:
-            children.append(
-                BrowseMediaSource(
-                    domain=DOMAIN,
-                    identifier=_encode_id(episode.episode_path),
-                    media_class=MediaClass.MUSIC,
-                    media_content_type="audio/mpeg",
-                    title=episode.title,
-                    can_play=True,
-                    can_expand=False,
-                )
+        children = [
+            BrowseMediaSource(
+                domain=DOMAIN,
+                identifier=_encode_id(episode.episode_path),
+                media_class=MediaClass.EPISODE,
+                media_content_type=EPISODE_CONTENT_TYPE,
+                title=episode.title if episode.is_played else UNPLAYED_MARK + episode.title,
+                can_play=True,
+                can_expand=False,
+                thumbnail=artwork,
             )
+            for episode in episodes
+        ]
 
         return BrowseMediaSource(
             domain=DOMAIN,
             identifier=_encode_id(feed_path),
             media_class=MediaClass.PODCAST,
             media_content_type=MediaType.PODCAST,
-            title=podcast_title,
+            title=podcast.title if podcast else "Podcast",
             can_play=False,
             can_expand=True,
             children=children,
+            children_media_class=MediaClass.EPISODE,
+            thumbnail=artwork,
         )

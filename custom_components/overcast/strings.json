@@ -2,77 +2,117 @@
   "config": {
     "step": {
       "user": {
-        "title": "Overcast Login",
-        "description": "Choose how to authenticate with Overcast.",
+        "title": "Log in to Overcast",
+        "description": "Choose how to log in to Overcast.",
         "menu_options": {
-          "email": "Email & Password",
-          "qr": "QR Code (scan with Overcast app)"
+          "email": "Email and password",
+          "qr": "QR code (approve in the Overcast app)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Log in to Overcast again",
+        "description": "Overcast no longer accepts the saved login. Choose how to log in again.",
+        "menu_options": {
+          "email": "Email and password",
+          "qr": "QR code (approve in the Overcast app)"
         }
       },
       "email": {
-        "title": "Overcast Email Login",
-        "description": "Enter your Overcast account credentials.",
+        "title": "Overcast email login",
+        "description": "Enter the email and password of your Overcast account. The password is only sent to overcast.fm and is not stored.",
         "data": {
           "email": "Email",
           "password": "Password"
+        },
+        "data_description": {
+          "email": "The email address of your Overcast account.",
+          "password": "Your Overcast password."
         }
-      },
-      "qr": {
-        "title": "Overcast QR Login",
-        "description": "Scan this QR code with the Overcast iOS app to log in:\n\n`{qr_url}`\n\nWaiting for approval..."
       }
     },
+    "progress": {
+      "qr_scan": "Scan this code with the camera on the iPhone or iPad that runs Overcast, then approve the login in the app.\n\n![QR code]({qr_image})\n\nIf the code does not show, open this link on that device instead:\n\n`{qr_link}`\n\nThis step finishes on its own once Overcast approves the login. The code expires after 5 minutes."
+    },
     "error": {
-      "invalid_auth": "Invalid email or password",
-      "cannot_connect": "Cannot connect to Overcast",
-      "qr_timeout": "QR code login timed out — please try again",
-      "unknown": "An unexpected error occurred"
+      "invalid_auth": "Overcast rejected the email or password.",
+      "cannot_connect": "Could not reach overcast.fm. Check the connection and try again.",
+      "unknown": "Unexpected error. Check the Home Assistant log."
     },
     "abort": {
-      "already_configured": "Overcast is already configured",
-      "reauth_successful": "Re-authentication successful"
+      "already_configured": "This Overcast account is already set up.",
+      "reauth_successful": "Logged in again.",
+      "wrong_account": "That login is for a different Overcast account than this entry.",
+      "cannot_connect": "Could not reach overcast.fm. Check the connection and try again.",
+      "qr_timeout": "The QR code was not approved within 5 minutes. Start again to get a new code."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Overcast options",
+        "data": {
+          "mark_played": "Mark played when an episode ends"
+        },
+        "data_description": {
+          "mark_played": "For episodes started from the media browser: mark them played in Overcast when they play to within a minute of the end."
+        }
+      }
     }
   },
   "services": {
     "play_latest": {
-      "name": "Play Latest",
-      "description": "Play the latest unplayed episode(s) of named podcasts on a media player.",
+      "name": "Play latest",
+      "description": "Play the newest unplayed episode of each named podcast on a media player. The first plays now; the rest play in order as each one finishes.",
       "fields": {
         "podcasts": {
           "name": "Podcasts",
-          "description": "List of podcast names to play."
+          "description": "Podcast names. An exact title match wins; otherwise the first title that contains the text."
         },
         "target_player": {
-          "name": "Target Player",
-          "description": "Entity ID of the media player to play on."
+          "name": "Target player",
+          "description": "Media player to play on."
         },
         "mark_played": {
-          "name": "Mark Played",
-          "description": "Mark episodes as played in Overcast after playback."
+          "name": "Mark played",
+          "description": "Mark each episode played in Overcast when it plays to within a minute of the end. Stopping it early never marks it played."
         },
         "resume_position": {
-          "name": "Resume Position",
-          "description": "Resume from Overcast's saved position."
+          "name": "Resume position",
+          "description": "Start from the position saved in Overcast."
         },
         "speed": {
           "name": "Speed",
-          "description": "Playback speed to sync to Overcast (e.g. 1.5). Only affects what Overcast records, not actual player speed."
+          "description": "Speed to record in Overcast, from 0.75 to 2.25. It does not change how fast the player plays. Leave empty to keep the podcast's Overcast setting."
+        },
+        "config_entry_id": {
+          "name": "Overcast account",
+          "description": "Which Overcast account to use. Only needed when more than one is set up."
         }
       }
     },
     "mark_played": {
-      "name": "Mark Played",
-      "description": "Mark an episode as played in Overcast.",
+      "name": "Mark played",
+      "description": "Mark an episode played in Overcast without playing it.",
       "fields": {
         "episode_url": {
           "name": "Episode URL",
-          "description": "Overcast episode URL (e.g. https://overcast.fm/+XXXXX)."
+          "description": "Overcast episode link, such as https://overcast.fm/+d5BN-RlCs."
+        },
+        "config_entry_id": {
+          "name": "Overcast account",
+          "description": "Which Overcast account to use. Only needed when more than one is set up."
         }
       }
     },
     "refresh": {
       "name": "Refresh",
-      "description": "Force refresh of Overcast subscription and episode data."
+      "description": "Reload subscriptions and clear cached episode lists.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Overcast account",
+          "description": "Account to refresh. Leave empty to refresh all."
+        }
+      }
     }
   }
 }
