@@ -14,6 +14,7 @@ from typing import Any
 
 import aiohttp
 from bs4 import BeautifulSoup, Tag
+from yarl import URL
 
 from .const import (
     DEFAULT_SPEED_ID,
@@ -42,6 +43,56 @@ SEL_AUDIO_SOURCE = "audio#audioplayer source"
 SEL_PODCAST_TITLE = "h2.centertext"
 SEL_PODCAST_ART = "img.art.fullart"
 SEL_UNPLAYED_INDICATOR = "svg.unplayed_indicator"
+
+
+OVERCAST_HOST = "overcast.fm"
+EPISODE_PATH_RE = re.compile(r"^/\+[\w-]+$", re.ASCII)
+# Podcast pages: /p<id>-<slug> or /itunes<id>[/<slug>]
+FEED_PATH_RE = re.compile(r"^/(p\d+-[\w-]+|itunes\d+(/[^/?#@\\\s]*)?)$", re.ASCII)
+
+
+class OvercastInvalidURLError(ValueError):
+    """A URL or path does not point at an overcast.fm page we accept."""
+
+
+def episode_path_from_url(value: str) -> str:
+    """Return the /+<id> path of an overcast.fm episode URL.
+
+    Every request carries the session cookie, so a URL that is not exactly
+    https://overcast.fm/+<id> must be refused. Plain string handling let
+    "https://overcast.fm.evil.com/+x" or "https://overcast.fm@evil.com/+x"
+    through and sent the cookie to another host.
+    """
+    value = value.strip()
+    if value.startswith("/") and not value.startswith("//"):
+        path = value
+    else:
+        try:
+            url = URL(value)
+        except (ValueError, TypeError) as err:
+            raise OvercastInvalidURLError(f"Not a valid URL: {value}") from err
+        if (
+            url.scheme != "https"
+            or url.host != OVERCAST_HOST
+            or url.user is not None
+            or url.password is not None
+            or url.port != 443
+        ):
+            raise OvercastInvalidURLError(f"Not an overcast.fm URL: {value}")
+        path = url.path
+    if not EPISODE_PATH_RE.match(path):
+        raise OvercastInvalidURLError(f"Not an Overcast episode URL: {value}")
+    return path
+
+
+def _page_url(path: str, pattern: re.Pattern[str]) -> str:
+    """Build an overcast.fm URL from a site path, refusing anything else."""
+    if not pattern.match(path):
+        raise OvercastInvalidURLError(f"Unexpected Overcast path: {path}")
+    url = URL(OVERCAST_BASE_URL).with_path(path, encoded=True)
+    if url.host != OVERCAST_HOST:
+        raise OvercastInvalidURLError(f"Unexpected Overcast path: {path}")
+    return str(url)
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +341,7 @@ class OvercastClient:
 
     async def get_episodes(self, feed_path: str) -> list[Episode]:
         """Fetch episodes for a podcast."""
-        url = f"{OVERCAST_BASE_URL}{feed_path}"
+        url = _page_url(feed_path, FEED_PATH_RE)
         try:
             resp = await self._session.get(url, headers=self._headers())
         except aiohttp.ClientError as err:
@@ -335,7 +386,7 @@ class OvercastClient:
 
     async def get_episode_detail(self, episode_path: str) -> Episode:
         """Fetch full episode detail including audio URL and sync metadata."""
-        url = f"{OVERCAST_BASE_URL}{episode_path}"
+        url = _page_url(episode_path, EPISODE_PATH_RE)
         try:
             resp = await self._session.get(url, headers=self._headers())
         except aiohttp.ClientError as err:

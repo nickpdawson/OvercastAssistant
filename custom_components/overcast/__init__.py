@@ -12,7 +12,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, ServiceValidationError
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -33,9 +33,11 @@ from .overcast_api import (
     OvercastAuthError,
     OvercastClient,
     OvercastConnectionError,
+    OvercastInvalidURLError,
     OvercastParseError,
     Podcast,
     SyncState,
+    episode_path_from_url,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -391,11 +393,12 @@ def _register_services(hass: HomeAssistant) -> None:
             return
         coordinator: OvercastCoordinator = coordinators[0]
 
-        # Extract episode path from URL
-        if episode_url.startswith("https://overcast.fm"):
-            episode_path = episode_url.replace("https://overcast.fm", "")
-        else:
-            episode_path = episode_url
+        try:
+            episode_path = episode_path_from_url(episode_url)
+        except OvercastInvalidURLError as err:
+            raise ServiceValidationError(
+                f"episode_url must look like https://overcast.fm/+<id>: {err}"
+            ) from err
 
         detail = await coordinator.async_get_episode_detail(episode_path)
         if detail.item_id:
