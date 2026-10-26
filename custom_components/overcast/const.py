@@ -6,17 +6,16 @@ OVERCAST_BASE_URL = "https://overcast.fm"
 LOGIN_URL = f"{OVERCAST_BASE_URL}/login"
 PODCASTS_URL = f"{OVERCAST_BASE_URL}/podcasts"
 QR_VERIFY_URL = f"{OVERCAST_BASE_URL}/main/login_qr_verify"
-OPML_EXPORT_URL = f"{OVERCAST_BASE_URL}/account/export_opml/extended"
 
 USER_AGENT = "HomeAssistant/Overcast-Integration (overcast.fm)"
 
-# Progress sentinel — send as p= to mark episode finished
+# Sent as p= to mark an episode finished
 PROGRESS_FINISHED_SENTINEL = 2147483647  # 0x7FFFFFFF
 
 # Default speed (1.0x)
 DEFAULT_SPEED_ID = 0
 
-# Speed ID → playback rate mapping
+# Speed ID -> playback rate
 SPEED_MAP = {
     750: 0.75,
     0: 1.0,
@@ -33,7 +32,6 @@ SPEED_MAP = {
 SYNC_INTERVAL_SECONDS = 30
 SUBSCRIPTION_REFRESH_SECONDS = 3600
 EPISODE_REFRESH_SECONDS = 300
-EPISODE_REFRESH_INACTIVE_SECONDS = 1800
 
 # QR login polling
 QR_POLL_INITIAL_INTERVAL = 1
@@ -45,5 +43,16 @@ QR_POLL_TIMEOUT = 300
 CONF_COOKIE = "cookie"
 CONF_AUTH_METHOD = "auth_method"
 CONF_EMAIL = "email"
-CONF_SUBSCRIPTION_REFRESH = "subscription_refresh_interval"
-CONF_EPISODE_REFRESH = "episode_refresh_interval"
+
+# Services
+SERVICE_PLAY_LATEST = "play_latest"
+SERVICE_MARK_PLAYED = "mark_played"
+SERVICE_REFRESH = "refresh"
+
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+ATTR_PODCASTS = "podcasts"
+ATTR_TARGET_PLAYER = "target_player"
+ATTR_MARK_PLAYED = "mark_played"
+ATTR_RESUME_POSITION = "resume_position"
+ATTR_SPEED = "speed"
+ATTR_EPISODE_URL = "episode_url"

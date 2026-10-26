@@ -35,44 +35,58 @@
   },
   "services": {
     "play_latest": {
-      "name": "Play Latest",
-      "description": "Play the latest unplayed episode(s) of named podcasts on a media player.",
+      "name": "Play latest",
+      "description": "Play the newest unplayed episode of each named podcast on a media player. The first plays now; the rest play in order as each one finishes.",
       "fields": {
         "podcasts": {
           "name": "Podcasts",
-          "description": "List of podcast names to play."
+          "description": "Podcast names. An exact title match wins; otherwise the first title that contains the text."
         },
         "target_player": {
-          "name": "Target Player",
-          "description": "Entity ID of the media player to play on."
+          "name": "Target player",
+          "description": "Media player to play on."
         },
         "mark_played": {
-          "name": "Mark Played",
-          "description": "Mark episodes as played in Overcast after playback."
+          "name": "Mark played",
+          "description": "Mark each episode played in Overcast when it plays to within a minute of the end. Stopping it early never marks it played."
         },
         "resume_position": {
-          "name": "Resume Position",
-          "description": "Resume from Overcast's saved position."
+          "name": "Resume position",
+          "description": "Start from the position saved in Overcast."
         },
         "speed": {
           "name": "Speed",
-          "description": "Playback speed to sync to Overcast (e.g. 1.5). Only affects what Overcast records, not actual player speed."
+          "description": "Speed to record in Overcast, from 0.75 to 2.25. It does not change how fast the player plays. Leave empty to keep the podcast's Overcast setting."
+        },
+        "config_entry_id": {
+          "name": "Overcast account",
+          "description": "Which Overcast account to use. Only needed when more than one is set up."
         }
       }
     },
     "mark_played": {
-      "name": "Mark Played",
-      "description": "Mark an episode as played in Overcast.",
+      "name": "Mark played",
+      "description": "Mark an episode played in Overcast without playing it.",
       "fields": {
         "episode_url": {
           "name": "Episode URL",
-          "description": "Overcast episode URL (e.g. https://overcast.fm/+XXXXX)."
+          "description": "Overcast episode link, such as https://overcast.fm/+d5BN-RlCs."
+        },
+        "config_entry_id": {
+          "name": "Overcast account",
+          "description": "Which Overcast account to use. Only needed when more than one is set up."
         }
       }
     },
     "refresh": {
       "name": "Refresh",
-      "description": "Force refresh of Overcast subscription and episode data."
+      "description": "Reload subscriptions and clear cached episode lists.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Overcast account",
+          "description": "Account to refresh. Leave empty to refresh all."
+        }
+      }
     }
   }
 }

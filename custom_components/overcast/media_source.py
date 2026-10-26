@@ -13,9 +13,12 @@ from homeassistant.components.media_source import (
     PlayMedia,
     Unresolvable,
 )
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
+from .coordinator import OvercastCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,12 +52,12 @@ class OvercastMediaSource(MediaSource):
         super().__init__(DOMAIN)
         self.hass = hass
 
-    def _get_coordinator(self):
-        """Get the first available coordinator."""
-        entries = self.hass.data.get(DOMAIN, {})
-        if not entries:
-            return None
-        return next(iter(entries.values()))
+    def _get_coordinator(self) -> OvercastCoordinator | None:
+        """Return the coordinator of the first loaded Overcast account."""
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if entry.state is ConfigEntryState.LOADED:
+                return entry.runtime_data
+        return None
 
     async def async_resolve_media(self, item: MediaSourceItem) -> PlayMedia:
         """Resolve an episode to a playable URL."""
@@ -66,7 +69,10 @@ class OvercastMediaSource(MediaSource):
         if not identifier or not identifier.startswith("/+"):
             raise Unresolvable(f"Invalid episode identifier: {identifier}")
 
-        episode = await coordinator.async_get_episode_detail(identifier)
+        try:
+            episode = await coordinator.async_get_episode_detail(identifier)
+        except HomeAssistantError as err:
+            raise Unresolvable(str(err)) from err
         if not episode.audio_url:
             raise Unresolvable(f"No audio URL for episode: {identifier}")
 
@@ -86,11 +92,13 @@ class OvercastMediaSource(MediaSource):
 
         identifier = _decode_id(item.identifier) if item.identifier else ""
 
-        if not identifier:
-            return await self._build_root(coordinator)
-
-        if identifier.startswith("/p") or identifier.startswith("/itunes"):
-            return await self._build_podcast(coordinator, identifier)
+        try:
+            if not identifier:
+                return await self._build_root(coordinator)
+            if identifier.startswith("/p") or identifier.startswith("/itunes"):
+                return await self._build_podcast(coordinator, identifier)
+        except HomeAssistantError as err:
+            raise BrowseError(str(err)) from err
 
         raise BrowseError(f"Unknown identifier: {identifier}")
 
@@ -98,6 +106,8 @@ class OvercastMediaSource(MediaSource):
         """Build the root listing of all subscriptions."""
         if not coordinator.subscriptions:
             await coordinator.async_refresh()
+            if not coordinator.last_update_success:
+                raise BrowseError("Could not load Overcast subscriptions")
 
         children = []
         for podcast in coordinator.subscriptions:
