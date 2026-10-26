@@ -4,20 +4,41 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 import time
-from typing import Any, TypeVar
+from typing import TypeVar
 
+from homeassistant.components.media_player import (
+    ATTR_MEDIA_CONTENT_ID,
+    ATTR_MEDIA_DURATION,
+    ATTR_MEDIA_POSITION,
+    ATTR_MEDIA_POSITION_UPDATED_AT,
+)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.const import (
+    STATE_IDLE,
+    STATE_OFF,
+    STATE_PAUSED,
+    STATE_PLAYING,
+    STATE_STANDBY,
+    STATE_UNAVAILABLE,
+)
+from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
     DOMAIN,
     EPISODE_REFRESH_SECONDS,
+    MARK_PLAYED_WINDOW_SECONDS,
+    PLAY_START_GRACE_SECONDS,
+    PLAY_START_TIMEOUT_SECONDS,
     SPEED_MAP,
     SUBSCRIPTION_REFRESH_SECONDS,
     SYNC_INTERVAL_SECONDS,
@@ -39,6 +60,9 @@ _T = TypeVar("_T")
 
 _RATE_TO_SPEED_ID = {v: k for k, v in SPEED_MAP.items()}
 
+# Player states that end a listening session.
+_STOPPED_STATES = {STATE_IDLE, STATE_OFF, STATE_STANDBY, STATE_UNAVAILABLE}
+
 
 def speed_float_to_id(rate: float) -> int:
     """Convert a playback rate (e.g. 1.5) to the nearest Overcast speed ID."""
@@ -56,7 +80,44 @@ class SyncState:
     speed_id: int
     episode_path: str
     player_entity_id: str
-    last_position: int = 0
+    audio_url: str | None
+    mark_played: bool
+    started: float  # time.monotonic() when sync started
+    last_position: float = 0.0  # last position seen on the player
+    last_synced: int | None = None  # last position sent to Overcast
+    duration: float | None = None
+    seen_playing: bool = False
+    content_id: str | None = None
+    pending_seek: int | None = None
+    unsub: CALLBACK_TYPE | None = None
+
+
+@dataclass
+class PlayQueue:
+    """Episodes still to play on one player after the current one ends."""
+
+    episode_paths: list[str]
+    resume: bool
+    mark_played: bool
+    speed: float | None
+
+
+def _position_at(state: State, when: datetime) -> float | None:
+    """Estimate a player's position at a moment, from a state snapshot."""
+    position = state.attributes.get(ATTR_MEDIA_POSITION)
+    if position is None:
+        return None
+    try:
+        position = float(position)
+    except (TypeError, ValueError):
+        return None
+    updated = state.attributes.get(ATTR_MEDIA_POSITION_UPDATED_AT)
+    if state.state == STATE_PLAYING and isinstance(updated, datetime):
+        position += max(0.0, (when - updated).total_seconds())
+    duration = state.attributes.get(ATTR_MEDIA_DURATION)
+    if isinstance(duration, (int, float)) and duration > 0:
+        position = min(position, float(duration))
+    return position
 
 
 class OvercastCoordinator(DataUpdateCoordinator[list[Podcast]]):
@@ -81,6 +142,7 @@ class OvercastCoordinator(DataUpdateCoordinator[list[Podcast]]):
         self.episodes: dict[str, list[Episode]] = {}  # feed_path -> episodes
         self._episode_cache_time: dict[str, float] = {}
         self._sync_states: dict[str, SyncState] = {}
+        self._queues: dict[str, PlayQueue] = {}
         self._sync_unsub: CALLBACK_TYPE | None = None
 
     @property
@@ -158,87 +220,59 @@ class OvercastCoordinator(DataUpdateCoordinator[list[Podcast]]):
         return None
 
     # ------------------------------------------------------------------
-    # Progress sync
+    # Playback and queue
     # ------------------------------------------------------------------
 
-    def start_sync(self, episode: Episode, player_entity_id: str) -> None:
-        """Start tracking playback progress for an episode on a player."""
-        if not episode.item_id:
-            _LOGGER.warning("Cannot sync, episode has no item id: %s", episode.episode_path)
-            return
-
-        self._sync_states[player_entity_id] = SyncState(
-            item_id=episode.item_id,
-            sync_version=episode.sync_version,
-            speed_id=episode.speed_id,
-            episode_path=episode.episode_path,
-            player_entity_id=player_entity_id,
-            last_position=episode.start_time,
-        )
-        if self._sync_unsub is None:
-            self._sync_unsub = async_track_time_interval(
-                self.hass,
-                self._async_sync_tick,
-                timedelta(seconds=SYNC_INTERVAL_SECONDS),
-                name="overcast progress sync",
-            )
-        _LOGGER.debug(
-            "Started sync for %s on %s (item %s, start %d)",
-            episode.episode_path,
+    async def async_play_queue(
+        self,
+        player_entity_id: str,
+        episode_paths: list[str],
+        *,
+        resume: bool,
+        mark_played: bool,
+        speed: float | None,
+    ) -> None:
+        """Play the first episode now and the rest as each one finishes."""
+        self.stop_sync(player_entity_id)
+        self._queues.pop(player_entity_id, None)
+        queue = PlayQueue(list(episode_paths), resume, mark_played, speed)
+        first = queue.episode_paths.pop(0)
+        if queue.episode_paths:
+            self._queues[player_entity_id] = queue
+        detail = await self.async_get_episode_detail(first)
+        await self.async_play_episode_on_player(
+            detail,
             player_entity_id,
-            episode.item_id,
-            episode.start_time,
+            resume=resume,
+            speed_override=speed,
+            mark_played=mark_played,
         )
 
-    def stop_sync(self, player_entity_id: str | None = None) -> None:
-        """Stop sync for one player, or for all players."""
-        if player_entity_id:
-            self._sync_states.pop(player_entity_id, None)
-        else:
-            self._sync_states.clear()
-        if not self._sync_states and self._sync_unsub is not None:
-            self._sync_unsub()
-            self._sync_unsub = None
-
-    async def _async_post_progress(self, state: SyncState, position: int) -> None:
-        try:
-            state.sync_version = await self.client.set_progress(
-                state.item_id, position, state.speed_id, state.sync_version
-            )
-            state.last_position = position
-        except OvercastAuthError:
-            _LOGGER.warning("Overcast session expired during sync; starting reauth")
-            self.config_entry.async_start_reauth(self.hass)
-            self.stop_sync()
-        except OvercastError as err:
-            _LOGGER.warning("Progress sync failed for %s: %s", state.player_entity_id, err)
-
-    async def _async_sync_tick(self, _now: Any = None) -> None:
-        """Poll player positions and sync to Overcast."""
-        for entity_id, state in list(self._sync_states.items()):
-            player_state = self.hass.states.get(entity_id)
-            if not player_state:
+    async def _async_play_next(self, player_entity_id: str) -> None:
+        """Start the next queued episode on a player, if any."""
+        while (queue := self._queues.get(player_entity_id)) and queue.episode_paths:
+            path = queue.episode_paths.pop(0)
+            if not queue.episode_paths:
+                self._queues.pop(player_entity_id, None)
+            try:
+                detail = await self.async_get_episode_detail(path)
+                await self.async_play_episode_on_player(
+                    detail,
+                    player_entity_id,
+                    resume=queue.resume,
+                    speed_override=queue.speed,
+                    mark_played=queue.mark_played,
+                )
+            except HomeAssistantError as err:
+                _LOGGER.warning("Could not play queued episode %s: %s", path, err)
                 continue
+            return
+        self._queues.pop(player_entity_id, None)
 
-            if player_state.state == "playing":
-                position = player_state.attributes.get("media_position")
-                if position is None or abs(int(position) - state.last_position) < 10:
-                    continue
-                await self._async_post_progress(state, int(position))
-
-            elif player_state.state == "idle" and state.last_position > 0:
-                try:
-                    await self.client.mark_episode_played(
-                        state.item_id, state.speed_id, state.sync_version
-                    )
-                except OvercastError as err:
-                    _LOGGER.warning("Failed to mark played: %s", err)
-                self.stop_sync(entity_id)
-
-            elif player_state.state == "paused":
-                position = player_state.attributes.get("media_position")
-                if position is not None:
-                    await self._async_post_progress(state, int(position))
+    def queued_episodes(self, player_entity_id: str) -> list[str]:
+        """Return the episode paths still queued for a player."""
+        queue = self._queues.get(player_entity_id)
+        return list(queue.episode_paths) if queue else []
 
     async def async_play_episode_on_player(
         self,
@@ -246,6 +280,7 @@ class OvercastCoordinator(DataUpdateCoordinator[list[Podcast]]):
         player_entity_id: str,
         resume: bool = True,
         speed_override: float | None = None,
+        mark_played: bool = True,
     ) -> None:
         """Play an episode on a media player and start progress sync."""
         if not episode.audio_url:
@@ -274,4 +309,243 @@ class OvercastCoordinator(DataUpdateCoordinator[list[Podcast]]):
         if speed_override is not None:
             episode.speed_id = speed_float_to_id(speed_override)
 
-        self.start_sync(episode, player_entity_id)
+        self.start_sync(
+            episode,
+            player_entity_id,
+            mark_played=mark_played,
+            start_position=episode.start_time if resume else 0,
+        )
+
+    # ------------------------------------------------------------------
+    # Progress sync
+    # ------------------------------------------------------------------
+
+    def start_sync(
+        self,
+        episode: Episode,
+        player_entity_id: str,
+        *,
+        mark_played: bool,
+        start_position: int = 0,
+        seek_on_start: bool = False,
+    ) -> None:
+        """Track playback of an episode on a player and report it to Overcast.
+
+        seek_on_start asks the player to seek to start_position once it is
+        seen playing; used when HA started playback itself (media browser).
+        """
+        if not episode.item_id:
+            _LOGGER.warning("Cannot sync, episode has no item id: %s", episode.episode_path)
+            return
+
+        self._drop_sync(player_entity_id)
+        state = SyncState(
+            item_id=episode.item_id,
+            sync_version=episode.sync_version,
+            speed_id=episode.speed_id,
+            episode_path=episode.episode_path,
+            player_entity_id=player_entity_id,
+            audio_url=episode.audio_url,
+            mark_played=mark_played,
+            started=time.monotonic(),
+            last_position=float(start_position),
+            last_synced=start_position,
+            pending_seek=start_position if seek_on_start and start_position > 0 else None,
+        )
+
+        @callback
+        def _state_changed(event: Event[EventStateChangedData]) -> None:
+            if self._sync_states.get(player_entity_id) is not state:
+                return
+            self.config_entry.async_create_task(
+                self.hass,
+                self._async_handle_state_change(
+                    state, event.data["old_state"], event.data["new_state"]
+                ),
+                f"overcast sync {player_entity_id}",
+            )
+
+        state.unsub = async_track_state_change_event(
+            self.hass, [player_entity_id], _state_changed
+        )
+        self._sync_states[player_entity_id] = state
+
+        if self._sync_unsub is None:
+            self._sync_unsub = async_track_time_interval(
+                self.hass,
+                self._async_sync_tick,
+                timedelta(seconds=SYNC_INTERVAL_SECONDS),
+                name="overcast progress sync",
+            )
+        _LOGGER.debug(
+            "Started sync for %s on %s (item %s, start %d)",
+            episode.episode_path,
+            player_entity_id,
+            episode.item_id,
+            start_position,
+        )
+
+    def _drop_sync(self, player_entity_id: str) -> None:
+        if (state := self._sync_states.pop(player_entity_id, None)) and state.unsub:
+            state.unsub()
+        if not self._sync_states and self._sync_unsub is not None:
+            self._sync_unsub()
+            self._sync_unsub = None
+
+    def stop_sync(self, player_entity_id: str | None = None) -> None:
+        """Stop sync for one player, or for all players and clear all queues."""
+        if player_entity_id:
+            self._drop_sync(player_entity_id)
+            return
+        for entity_id in list(self._sync_states):
+            self._drop_sync(entity_id)
+        self._queues.clear()
+
+    def is_syncing(self, player_entity_id: str) -> bool:
+        """Return True while progress for a player is being tracked."""
+        return player_entity_id in self._sync_states
+
+    def _observe(self, state: SyncState, player: State, when: datetime) -> bool:
+        """Record what the player reports. Returns False if it moved on to other media."""
+        if player.state not in (STATE_PLAYING, STATE_PAUSED):
+            return True
+        content_id = player.attributes.get(ATTR_MEDIA_CONTENT_ID)
+        in_grace = time.monotonic() - state.started < PLAY_START_GRACE_SECONDS
+        if not state.seen_playing:
+            # Right after play_media the player can still report the old media.
+            if in_grace and not (content_id and content_id == state.audio_url):
+                return True
+            state.seen_playing = True
+            state.content_id = content_id
+        elif content_id and state.content_id and content_id != state.content_id:
+            return False
+
+        duration = player.attributes.get(ATTR_MEDIA_DURATION)
+        if isinstance(duration, (int, float)) and duration > 0:
+            state.duration = float(duration)
+        position = _position_at(player, when)
+        if position is not None:
+            state.last_position = position
+        return True
+
+    async def _async_post_progress(self, state: SyncState, position: int) -> None:
+        """Send a position to Overcast unless it is the one already sent."""
+        if state.last_synced is not None and position == state.last_synced:
+            return
+        try:
+            state.sync_version = await self.client.set_progress(
+                state.item_id, position, state.speed_id, state.sync_version
+            )
+            state.last_synced = position
+        except OvercastAuthError:
+            _LOGGER.warning("Overcast session expired during sync; starting reauth")
+            self.config_entry.async_start_reauth(self.hass)
+            self.stop_sync()
+        except OvercastError as err:
+            _LOGGER.warning("Progress sync failed for %s: %s", state.player_entity_id, err)
+
+    def is_near_end(self, state: SyncState) -> bool:
+        """True when the last known position is within the mark-played window of the end."""
+        return (
+            state.duration is not None
+            and state.duration - state.last_position <= MARK_PLAYED_WINDOW_SECONDS
+        )
+
+    async def _async_handle_state_change(
+        self, state: SyncState, old: State | None, new: State | None
+    ) -> None:
+        if self._sync_states.get(state.player_entity_id) is not state:
+            return
+        when = new.last_changed if new is not None else dt_util.utcnow()
+        if old is not None and old.state == STATE_PLAYING:
+            # The last playing snapshot, extrapolated to the moment it
+            # stopped, is the best position estimate; players often reset
+            # media_position when they go idle.
+            if not self._observe(state, old, when):
+                await self._async_media_replaced(state)
+                return
+
+        new_state = new.state if new is not None else STATE_UNAVAILABLE
+        if new_state in _STOPPED_STATES:
+            await self._async_player_stopped(state, new_state)
+            return
+        if new is None:
+            return
+        if not self._observe(state, new, when):
+            await self._async_media_replaced(state)
+            return
+        if new_state == STATE_PLAYING and state.seen_playing and state.pending_seek:
+            seek, state.pending_seek = state.pending_seek, None
+            await self.hass.services.async_call(
+                "media_player",
+                "media_seek",
+                {"entity_id": state.player_entity_id, "seek_position": seek},
+                blocking=False,
+            )
+        elif new_state == STATE_PAUSED and state.seen_playing:
+            await self._async_post_progress(state, int(state.last_position))
+
+    async def _async_media_replaced(self, state: SyncState) -> None:
+        """The player switched to other media: keep progress, drop sync and queue."""
+        _LOGGER.debug("%s switched away from %s", state.player_entity_id, state.episode_path)
+        self._drop_sync(state.player_entity_id)
+        self._queues.pop(state.player_entity_id, None)
+        await self._async_post_progress(state, int(state.last_position))
+
+    async def _async_player_stopped(self, state: SyncState, player_state: str) -> None:
+        """Handle the end of a listening session.
+
+        Only an idle player whose last position was within a minute of the
+        end counts as finished. A manual stop, or a player going off or
+        unavailable, saves the position and never marks the episode played.
+        """
+        if not state.seen_playing and player_state == STATE_IDLE:
+            # Still starting up; the tick gives up if it never plays.
+            return
+
+        self._drop_sync(state.player_entity_id)
+        finished = player_state == STATE_IDLE and state.seen_playing and self.is_near_end(state)
+
+        if finished and state.mark_played:
+            try:
+                state.sync_version = await self.client.mark_episode_played(
+                    state.item_id, state.speed_id, state.sync_version
+                )
+                _LOGGER.debug("Marked %s played", state.episode_path)
+            except OvercastAuthError:
+                self.config_entry.async_start_reauth(self.hass)
+            except OvercastError as err:
+                _LOGGER.warning("Failed to mark %s played: %s", state.episode_path, err)
+        elif state.seen_playing:
+            await self._async_post_progress(state, int(state.last_position))
+
+        if finished:
+            await self._async_play_next(state.player_entity_id)
+        else:
+            self._queues.pop(state.player_entity_id, None)
+
+    async def _async_sync_tick(self, now: datetime | None = None) -> None:
+        """Poll player positions and send changes to Overcast."""
+        when = now or dt_util.utcnow()
+        for entity_id, state in list(self._sync_states.items()):
+            player = self.hass.states.get(entity_id)
+            if player is None:
+                continue
+            if player.state in _STOPPED_STATES:
+                await self._async_player_stopped(state, player.state)
+                continue
+            if not self._observe(state, player, when):
+                await self._async_media_replaced(state)
+                continue
+            if not state.seen_playing:
+                if time.monotonic() - state.started > PLAY_START_TIMEOUT_SECONDS:
+                    _LOGGER.debug("%s never started playing; stopping sync", entity_id)
+                    self._drop_sync(entity_id)
+                    self._queues.pop(entity_id, None)
+                continue
+            position = int(state.last_position)
+            if player.state == STATE_PLAYING:
+                if state.last_synced is None or abs(position - state.last_synced) >= 10:
+                    await self._async_post_progress(state, position)
+            elif player.state == STATE_PAUSED:
+                await self._async_post_progress(state, position)

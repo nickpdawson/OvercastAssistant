@@ -111,12 +111,12 @@ async def _async_play_latest(call: ServiceCall) -> None:
         _LOGGER.info("No unplayed episodes to play")
         return
 
-    first = await coordinator.async_get_episode_detail(episodes_to_play[0].episode_path)
-    await coordinator.async_play_episode_on_player(
-        first,
+    await coordinator.async_play_queue(
         player,
+        [episode.episode_path for episode in episodes_to_play],
         resume=call.data[ATTR_RESUME_POSITION],
-        speed_override=speed,
+        mark_played=call.data[ATTR_MARK_PLAYED],
+        speed=speed,
     )
 
 

@@ -56,3 +56,10 @@ ATTR_MARK_PLAYED = "mark_played"
 ATTR_RESUME_POSITION = "resume_position"
 ATTR_SPEED = "speed"
 ATTR_EPISODE_URL = "episode_url"
+
+# An episode counts as finished when the player goes idle this close to the end.
+MARK_PLAYED_WINDOW_SECONDS = 60
+# After play_media the player may still report the previous media for a moment.
+PLAY_START_GRACE_SECONDS = 15
+# Give up on a sync if the player never starts playing.
+PLAY_START_TIMEOUT_SECONDS = 120
