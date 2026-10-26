@@ -89,6 +89,7 @@ class SyncState:
     seen_playing: bool = False
     content_id: str | None = None
     pending_seek: int | None = None
+    hold_until: float = 0.0  # no periodic POSTs before this (after a seek)
     unsub: CALLBACK_TYPE | None = None
 
 
@@ -316,6 +317,24 @@ class OvercastCoordinator(DataUpdateCoordinator[list[Podcast]]):
             start_position=episode.start_time if resume else 0,
         )
 
+    @callback
+    def async_track_browser_play(
+        self, episode: Episode, player_entity_id: str, *, mark_played: bool
+    ) -> None:
+        """Track an episode the media browser is about to play.
+
+        HA starts playback itself after resolving the media, at position 0,
+        so seek to the saved Overcast position once the player is playing.
+        """
+        self._queues.pop(player_entity_id, None)
+        self.start_sync(
+            episode,
+            player_entity_id,
+            mark_played=mark_played,
+            start_position=episode.start_time,
+            seek_on_start=True,
+        )
+
     # ------------------------------------------------------------------
     # Progress sync
     # ------------------------------------------------------------------
@@ -476,13 +495,16 @@ class OvercastCoordinator(DataUpdateCoordinator[list[Podcast]]):
             return
         if new_state == STATE_PLAYING and state.seen_playing and state.pending_seek:
             seek, state.pending_seek = state.pending_seek, None
+            # Until the player reports the new position, ticks would
+            # send the pre-seek position and overwrite Overcast's.
+            state.hold_until = time.monotonic() + PLAY_START_GRACE_SECONDS
             await self.hass.services.async_call(
                 "media_player",
                 "media_seek",
                 {"entity_id": state.player_entity_id, "seek_position": seek},
                 blocking=False,
             )
-        elif new_state == STATE_PAUSED and state.seen_playing:
+        elif new_state == STATE_PAUSED and state.seen_playing and state.pending_seek is None:
             await self._async_post_progress(state, int(state.last_position))
 
     async def _async_media_replaced(self, state: SyncState) -> None:
@@ -542,6 +564,8 @@ class OvercastCoordinator(DataUpdateCoordinator[list[Podcast]]):
                     _LOGGER.debug("%s never started playing; stopping sync", entity_id)
                     self._drop_sync(entity_id)
                     self._queues.pop(entity_id, None)
+                continue
+            if state.pending_seek is not None or time.monotonic() < state.hold_until:
                 continue
             position = int(state.last_position)
             if player.state == STATE_PLAYING:
