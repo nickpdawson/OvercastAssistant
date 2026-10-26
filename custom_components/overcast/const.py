@@ -63,3 +63,7 @@ MARK_PLAYED_WINDOW_SECONDS = 60
 PLAY_START_GRACE_SECONDS = 15
 # Give up on a sync if the player never starts playing.
 PLAY_START_TIMEOUT_SECONDS = 120
+
+# Option: mark episodes started from the media browser played when they end
+CONF_MARK_PLAYED = "mark_played"
+DEFAULT_MARK_PLAYED = True
